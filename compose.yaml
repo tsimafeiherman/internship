@@ -1,0 +1,6 @@
+services:
+  innowisemlinternshiptemp:
+    image: innowisemlinternshiptemp
+    build:
+      context: .
+      dockerfile: ./Dockerfile
