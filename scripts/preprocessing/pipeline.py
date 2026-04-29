@@ -14,7 +14,7 @@ from scripts.preprocessing.dqc_after_etl import validate_after_etl
 
 import json
 
-def process(data_dir: str = "data", save_report_path: str = "report.json") -> set:
+def process(data_dir: str = "data", save_report_path: str = "report.json", verbose: bool = True) -> set:
     
     item_categories, items, sales_train, shops, sample_submission, test = get_data(data_dir)
     
@@ -23,12 +23,14 @@ def process(data_dir: str = "data", save_report_path: str = "report.json") -> se
     )
     
     item_categories, items, sales_train, shops, sample_submission, test = clear_all(
-        item_categories, items, sales_train, shops, sample_submission, test
+        item_categories, items, sales_train, shops, sample_submission, test, verbose
     )
     
-    train = merge_dataframes(
+    train, merge_report = merge_dataframes(
         item_categories, items, sales_train, shops
     )
+    
+    dqc_report["merge_quality"] = merge_report
     
     def convert(obj):
         if hasattr(obj, "item"):

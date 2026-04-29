@@ -162,7 +162,7 @@ def validate_sample_submission(sample_submission: pd.DataFrame):
 
     return sample_submission, report
 
-def validate_test(test: pd.DataFrame):
+def validate_test(test: pd.DataFrame, items: pd.DataFrame, shops:pd.DataFrame):
 
     report = {}
     report["name"] = "test"
@@ -184,6 +184,23 @@ def validate_test(test: pd.DataFrame):
 
     report["n_shops"] = test.shop_id.nunique()
     report["n_items"] = test.item_id.nunique()
+    
+    bad_shops = ~test.shop_id.isin(shops.shop_id)
+    report["bad_shops"] = int(bad_shops.sum())
+    
+    bad_items = ~test.item_id.isin(items.item_id)
+    report["bad_items"] = int(bad_items.sum())
+    
+    if report["bad_shops"] > 0:
+        print(f"{report['bad_shops']} записей в test с отсутствующими shop_id")
+        print(test[bad_shops][["ID", "shop_id", "item_id"]].head())
+    
+    if report["bad_items"] > 0:
+        print(f"{report['bad_items']} записей в test с отсутствующими item_id")
+        print(test[bad_items][["ID", "shop_id", "item_id"]].head())
+        
+    assert report["bad_shops"] == 0, f"Найдены shop_id, которых нет в shops: {test[bad_shops]['shop_id'].unique()}"
+    assert report["bad_items"] == 0, f"Найдены item_id, которых нет в items: {test[bad_items]['item_id'].unique()}"
 
     return test, report
 
@@ -200,7 +217,7 @@ def validate_all(
     shops, shops_report = validate_shops(shops)
     sales_train, sales_report = validate_sales(sales_train, items, shops)
     sample_submission, sample_sub_report = validate_sample_submission(sample_submission)
-    test, test_report = validate_test(test)
+    test, test_report = validate_test(test, items, shops)
     
     final_report = {}
     for report in [
