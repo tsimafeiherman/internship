@@ -64,6 +64,64 @@ def aggregate_to_monthly(df: pd.DataFrame):
     
     return df
 
+def add_sparse_zero_rows_fast(df: pd.DataFrame):
+
+    df = df.sort_values(
+        ["shop_id", "item_id", "date_block_num"]
+    )
+
+    pairs = df.groupby(
+        ["shop_id", "item_id"]
+    )["date_block_num"].agg(["min", "max"]).reset_index()
+
+    expanded = []
+
+    for row in pairs.itertuples(index=False):
+
+        months = np.arange(row.min, row.max + 1)
+
+        expanded.append(
+            pd.DataFrame({
+                "date_block_num": months,
+                "shop_id": row.shop_id,
+                "item_id": row.item_id
+            })
+        )
+
+    expanded_df = pd.concat(expanded, ignore_index=True)
+
+    merged = expanded_df.merge(
+        df,
+        on=["date_block_num", "shop_id", "item_id"],
+        how="left"
+    )
+
+    merged["item_cnt_month"] = merged["item_cnt_month"].fillna(0)
+
+    fill_cols = [
+        "month_num",
+        "global_category",
+        "shop_city",
+        "month_sin",
+        "month_cos",
+        "is_december",
+        "service_or_item",
+        "item_price_mean"
+    ]
+
+    merged = merged.sort_values(
+        ["shop_id", "item_id", "date_block_num"]
+    )
+
+    merged[fill_cols] = merged.groupby(
+        ["shop_id", "item_id"]
+    )[fill_cols].ffill().bfill()
+
+    print(f"Original rows: {len(df)}")
+    print(f"New rows: {len(merged)}")
+
+    return merged
+
 def add_lags_and_rolling(df: pd.DataFrame):
     df = df.sort_values(["shop_id", "item_id", "date_block_num"])
     
@@ -231,6 +289,7 @@ def do_feature_engeneering(train: pd.DataFrame, test:pd.DataFrame, encoder_dir: 
     train_df = add_global_category_and_city(train_df)
     train_df = add_date_features(train_df, is_train=True)
     train_df = aggregate_to_monthly(train_df)
+    train_df = add_sparse_zero_rows_fast(train_df)
     train_df = add_lags_and_rolling(train_df)
     train_df = add_item_history_features(train_df, last_month=33)
     train_df = add_shop_aggregates(train_df)
