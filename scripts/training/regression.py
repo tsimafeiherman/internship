@@ -6,41 +6,39 @@ from typing import Optional
 import mlflow
 import mlflow.lightgbm
 from datetime import datetime
+import optuna
+from optuna.integration.mlflow import MLflowCallback
 
 from sklearn.metrics import root_mean_squared_error
 
 class TrainModel:
     def __init__(self,
+        model,
         train_df: pd.DataFrame,
+        params: Optional[dict] = None,
         split_month: int = 30,
-        objective:str = 'tweedie',
-        n_estimators: int = 1000,
-        learning_rate: float = 0.01,
-        max_depth: int = 12,
-        num_leaves: int = 64,
-        random_state: int = 42,
-        verbosity: int = -1,
         experiment_name: str = "predict_future_sales",
         run_name: Optional[str] = None):
+        
+        self.model = model
+        self.params = params or {}
         
         self.train_df = train_df
         self.split_month = split_month
         self.experiment_name = experiment_name
         self.run_name = run_name or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        self.model = None
         self.cat_cols = ["global_category", "shop_city"]
         
-        self.params = {
-            'objective': objective,
-            'n_estimators': n_estimators,
-            'learning_rate': learning_rate,
-            'max_depth': max_depth,
-            'num_leaves': num_leaves,
-            'random_state': random_state,
-            'verbosity': verbosity
-        }
+        self.X_train = None
+        self.y_train = None
+        self.X_val = None
+        self.y_val = None
 
-    def fit(self):
+    def _prepare_data(self):
+        
+        if self.X_train is not None:
+            return
+        
         train_mask = self.train_df['date_block_num'] < self.split_month
         val_mask = self.train_df['date_block_num'] >= self.split_month
 
@@ -72,11 +70,103 @@ class TrainModel:
             X_train[col] = X_train[col].astype(int)
             X_val[col] = X_val[col].astype(int)
 
-        X_train = X_train.fillna(0)
-        X_val = X_val.fillna(0)
+        self.X_train = X_train.fillna(0)
+        self.y_train = y_train_clipped
+        self.X_val = X_val.fillna(0)
+        self.y_val = y_val_clipped
 
-        self.X_val = X_val
-        self.y_val_clipped = y_val_clipped
+    def _objective(self,
+        trial: optuna.Trial,
+        objective: str = "tweedie",
+        metric: str = "rmse",
+        verobosity: int = -1,
+        random_state: int = 42,
+        n_estimators: int = 1000) -> float:
+        
+        trial_params = {
+            'objective': objective,
+            'metric': metric,
+            'verbosity': verobosity,
+            'random_state': random_state,
+            'n_estimators': n_estimators,
+            
+            # optimization parametrs 
+            'learning_rate': trial.suggest_float('learning_rate', 0.005, 0.05, log=True),
+            'max_depth': trial.suggest_int('max_depth', 6, 16),
+            'num_leaves': trial.suggest_int('num_leaves', 16, 128),
+            'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
+            'subsample': trial.suggest_float('subsample', 0.6, 1.0),
+            'colsample_bytree': trial.suggest_float('colsample_bytree', 0.6, 1.0),
+            'reg_alpha': trial.suggest_float('reg_alpha', 1e-8, 10.0, log=True),
+            'reg_lambda': trial.suggest_float('reg_lambda', 1e-8, 10.0, log=True),
+            'min_child_weight': trial.suggest_float('min_child_weight', 1e-4, 1e2, log=True),
+        }
+        
+        model = type(self.model)(**trial_params)
+        model.fit(
+            self.X_train, self.y_train,
+            eval_set=[(self.X_val, self.y_val)],
+            eval_metric="rmse",
+            categorical_feature=self.cat_cols,
+            callbacks=[lgb.early_stopping(50), lgb.log_evaluation(0)]
+        )
+        
+        y_pred = model.predict(self.X_val)
+        return root_mean_squared_error(self.y_val, y_pred)
+    
+    def optimizer(self, n_trials: int = 25, timeout: Optional[int] = None, refit: bool = True):
+        
+        self._prepare_data()
+        print("=" * 50)
+        print("OPTUNA HYPERPARAMETER OPTIMIZATION")
+        print(f"Trials: {n_trials}")
+        print("=" * 50)
+
+        mlflow.set_experiment(self.experiment_name)
+
+        run_name = self.run_name
+        def mlflow_callback(study, trial):
+            with mlflow.start_run(
+                run_name=f"trial_{trial.number}_{run_name}",
+                nested=True
+            ):
+                mlflow.log_params(trial.params)
+                mlflow.log_metric("val_rmse", trial.value)
+                mlflow.set_tags({
+                    'trial_number': trial.number,
+                    'state': trial.state.name
+                })
+
+        study = optuna.create_study(
+            direction="minimize",
+            study_name=f"optuna_{datetime.now().strftime('%Y%m%d_%H%M')}",
+            pruner=optuna.pruners.MedianPruner(n_startup_trials=5, n_warmup_steps=10)
+        )
+        
+        study.optimize(
+            self._objective,
+            n_trials,
+            timeout,
+            callbacks=[mlflow_callback],
+            show_progress_bar=True
+        )
+        
+        self.best_params = study.best_params
+        self.best_rmse = study.best_value
+        
+        if refit:
+            print("\n=== Обучение с лучшими параметрами ===")
+            self.model = type(self.model)(**self.best_params)
+            self.fit()
+        
+        print(f"\nЛучший RMSE: {self.best_rmse:.4f}")
+        print(f"Лучшие параметры: {self.best_params}")
+        
+        return self.model
+        
+    def fit(self):
+
+        self._prepare_data()
 
         mlflow.set_experiment(self.experiment_name)
         
@@ -86,9 +176,9 @@ class TrainModel:
                 {
                     **self.params,
                     'split_month': self.split_month,
-                    'train_samples': len(X_train),
-                    'val_samples': len(X_val),
-                    'n_features': X_train.shape[1],
+                    'train_samples': len(self.X_train),
+                    'val_samples': len(self.X_val),
+                    'n_features': self.X_train.shape[1],
                     'cat_features': self.cat_cols,
                     'target_transform': 'clip_0_20',
                     'train_filter': 'positive_only'
@@ -97,18 +187,15 @@ class TrainModel:
             
             mlflow.set_tags(
                 {
-                    'model_type': 'LightGBM',
-                    'objective': 'tweedie',
+                    'model_type': type(self.model).__name__,
                     'data_version': 'v1',
                     'feature_engineering': 'sparse_zero_rows_lags_rolling_price'
                 }
             )
             
-            self.model = lgb.LGBMRegressor(**self.params)
-
             self.model.fit(
-                X_train, y_train_clipped,
-                eval_set=[(X_val, y_val_clipped)],
+                self.X_train, self.y_train,
+                eval_set=[(self.X_val, self.y_val)],
                 eval_metric='rmse',
                 categorical_feature=self.cat_cols,
                 callbacks=[lgb.early_stopping(20), lgb.log_evaluation(50)]
@@ -122,7 +209,7 @@ class TrainModel:
             })
             
             importance_df = pd.DataFrame({
-                'feature': X_train.columns,
+                'feature': self.X_train.columns,
                 'importance': self.model.feature_importances_
             }).sort_values('importance', ascending=False)
             
@@ -145,7 +232,7 @@ class TrainModel:
             raise ValueError("Сначала вызовите fit()")
         
         y_pred = self.model.predict(self.X_val)
-        rmse = root_mean_squared_error(self.y_val_clipped, y_pred)
+        rmse = root_mean_squared_error(self.y_val, y_pred)
         print(f'RMSE регрессора (только на положительных clipped): {rmse:.4f}')
         return rmse
 
