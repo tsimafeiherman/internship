@@ -58,6 +58,10 @@ class TrainPipeline:
         )
         
         self.train_df, self.test_df = final_data.get_final_data()
+        self.final_data = final_data
+        self.final_data.train_df = self.train_df
+        self.final_data.test_df = self.test_df
+        
         print(f"Train shape: {self.train_df.shape}")
         print(f"Test shape: {self.test_df.shape}")
         
@@ -95,8 +99,10 @@ class TrainPipeline:
         else:
             self.trainer.train(evaluate=True, save=False)
         
-        self.trainer.save(self.model_path)
+        self.trainer.save(self.model_path)  
         self.model = self.trainer.model
+        self.final_data.model = self.trainer.model
+        self.final_data.save_artifacts("artifacts")
         
         return self
     
