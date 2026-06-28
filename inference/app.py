@@ -46,28 +46,20 @@ async def predict(request: InferenceRequest):
     for item in request.items:
         if item.shop_id not in valid_shop_ids:
             raise HTTPException(
-                status_code=400,
-                detail=f"Unknown shop_id: {item.shop_id}"
+                status_code=400, detail=f"Unknown shop_id: {item.shop_id}"
             )
 
         if item.item_id not in valid_item_ids:
             raise HTTPException(
-                status_code=400,
-                detail=f"Unknown item_id: {item.item_id}"
+                status_code=400, detail=f"Unknown item_id: {item.item_id}"
             )
 
-        payload.append({
-            "shop_id": item.shop_id,
-            "item_id": item.item_id
-        })
+        payload.append({"shop_id": item.shop_id, "item_id": item.item_id})
 
     preds = predictor.predict_batch(payload)
 
     return [
-        PredictionResponse(
-            ID=item.ID,
-            item_cnt_month=float(pred)
-        )
+        PredictionResponse(ID=item.ID, item_cnt_month=float(pred))
         for item, pred in zip(request.items, preds)
     ]
 

@@ -155,9 +155,7 @@ class FinalData:
         obj.item_categories = pd.read_csv(artifacts_dir / "item_categories.csv")
 
         obj.items_full = obj.items.merge(
-            obj.item_categories,
-            on="item_category_id",
-            how="left"
+            obj.item_categories, on="item_category_id", how="left"
         )
 
         obj.shop_stats = pd.read_csv(artifacts_dir / "shop_stats.csv")
@@ -174,9 +172,9 @@ class FinalData:
         obj.last_lags["item_id"] = obj.last_lags["item_id"].astype(int)
         obj.price_stats["item_id"] = obj.price_stats["item_id"].astype(int)
 
-        obj.category_price_stats["global_category"] = (
-            obj.category_price_stats["global_category"].astype(str)
-        )
+        obj.category_price_stats["global_category"] = obj.category_price_stats[
+            "global_category"
+        ].astype(str)
 
         with open(artifacts_dir / "thresholds.json", "r") as f:
             thresholds = json.load(f)
@@ -192,9 +190,7 @@ class FinalData:
         return obj
 
     def predict(self, shop_id: int, item_id: int) -> float:
-        pred = self.predict_batch(
-            [{"shop_id": shop_id, "item_id": item_id}]
-        )[0]
+        pred = self.predict_batch([{"shop_id": shop_id, "item_id": item_id}])[0]
 
         return float(pred)
 
@@ -208,19 +204,13 @@ class FinalData:
         df["month_cos"] = np.cos(2 * np.pi * df["month_num"] / 12)
 
         # shop metadata
-        df = df.merge(
-            self.shops[["shop_id", "shop_name"]],
-            on="shop_id",
-            how="left"
-        )
+        df = df.merge(self.shops[["shop_id", "shop_name"]], on="shop_id", how="left")
 
         # item metadata
         df = df.merge(
-            self.items_full[
-                ["item_id", "item_name", "item_category_name"]
-            ],
+            self.items_full[["item_id", "item_name", "item_category_name"]],
             on="item_id",
-            how="left"
+            how="left",
         )
 
         keywords = [
@@ -243,47 +233,31 @@ class FinalData:
         )
 
         df["global_category"] = (
-            df["item_category_name"]
-            .str.split("-")
-            .str[0]
-            .str.strip()
-            .astype(str)
+            df["item_category_name"].str.split("-").str[0].str.strip().astype(str)
         )
 
-        df["shop_city"] = (
-            df["shop_name"]
-            .str.split(" ")
-            .str[0]
-            .str.strip()
-        )
+        df["shop_city"] = df["shop_name"].str.split(" ").str[0].str.strip()
 
         # feature merges
         df = df.merge(self.shop_stats, on="shop_id", how="left")
         df = df.merge(self.item_history, on="item_id", how="left")
         df = df.merge(self.last_lags, on=["shop_id", "item_id"], how="left")
         df = df.merge(self.price_stats, on="item_id", how="left")
-        df = df.merge(
-            self.category_price_stats,
-            on="global_category",
-            how="left"
-        )
+        df = df.merge(self.category_price_stats, on="global_category", how="left")
 
         df["price_ratio_to_category"] = (
-            df["item_price_global_mean"] /
-            df["category_price_global_mean"]
+            df["item_price_global_mean"] / df["category_price_global_mean"]
         )
 
-        df["price_ratio_to_category"] = (
-            df["price_ratio_to_category"].fillna(1)
-        )
+        df["price_ratio_to_category"] = df["price_ratio_to_category"].fillna(1)
 
         df["is_expensive"] = (
             df["item_price_global_mean"] > self.expensive_threshold
         ).astype(int)
 
-        df["is_cheap"] = (
-            df["item_price_global_mean"] < self.cheap_threshold
-        ).astype(int)
+        df["is_cheap"] = (df["item_price_global_mean"] < self.cheap_threshold).astype(
+            int
+        )
 
         df = df.drop(
             columns=["shop_name", "item_name", "item_category_name"],
