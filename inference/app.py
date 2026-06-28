@@ -1,4 +1,5 @@
 # main.py
+import os
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List
@@ -9,8 +10,9 @@ predictor = None
 
 def startup():
     global predictor
-    predictor = FinalData.load_artifacts("artifacts")
-    print("Model loaded")
+    artifacts_dir = os.getenv("ARTIFACTS_DIR", "artifacts")
+    predictor = FinalData.load_artifacts(artifacts_dir)
+    print(f"Model loaded from {artifacts_dir}")
 
 app = FastAPI(on_startup=[startup])
 

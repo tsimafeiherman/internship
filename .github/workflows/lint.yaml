@@ -1,0 +1,25 @@
+name: Lint
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff(linter)
+        run: ruff check . --output-format=github
+
+      - name: Run ruff(formatter check)
+        run: ruff format --check .

@@ -1,4 +1,20 @@
+# Артефакты и модели
+artifacts/
+models/
+encoders/
+mlruns/
+mlflow.db
+*.pkl
+*.txt
+
+# IDE
+.vscode/
+.idea/
+
+# Данные
 /data
+data/*.csv
+!data/.gitignore
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
