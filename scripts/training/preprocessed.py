@@ -153,9 +153,11 @@ class FinalData:
         obj.shops = pd.read_csv(artifacts_dir / "shops.csv")
         obj.items = pd.read_csv(artifacts_dir / "items.csv")
         obj.item_categories = pd.read_csv(artifacts_dir / "item_categories.csv")
-        # объединяем items с категориями
+
         obj.items_full = obj.items.merge(
-            obj.item_categories, on="item_category_id", how="left"
+            obj.item_categories,
+            on="item_category_id",
+            how="left"
         )
 
         obj.shop_stats = pd.read_csv(artifacts_dir / "shop_stats.csv")
@@ -166,8 +168,19 @@ class FinalData:
         )
         obj.last_lags = pd.read_csv(artifacts_dir / "last_lags.csv")
 
+        obj.shop_stats["shop_id"] = obj.shop_stats["shop_id"].astype(int)
+        obj.item_history["item_id"] = obj.item_history["item_id"].astype(int)
+        obj.last_lags["shop_id"] = obj.last_lags["shop_id"].astype(int)
+        obj.last_lags["item_id"] = obj.last_lags["item_id"].astype(int)
+        obj.price_stats["item_id"] = obj.price_stats["item_id"].astype(int)
+
+        obj.category_price_stats["global_category"] = (
+            obj.category_price_stats["global_category"].astype(str)
+        )
+
         with open(artifacts_dir / "thresholds.json", "r") as f:
             thresholds = json.load(f)
+
         obj.expensive_threshold = thresholds["expensive_threshold"]
         obj.cheap_threshold = thresholds["cheap_threshold"]
 
@@ -179,29 +192,36 @@ class FinalData:
         return obj
 
     def predict(self, shop_id: int, item_id: int) -> float:
-        df = pd.DataFrame([{"shop_id": shop_id, "item_id": item_id, "ID": 0}])
+        pred = self.predict_batch(
+            [{"shop_id": shop_id, "item_id": item_id}]
+        )[0]
 
-        shop_row = self.shops[self.shops["shop_id"] == shop_id]
-        shop_name = (
-            shop_row.iloc[0]["shop_name"] if not shop_row.empty else "UNKNOWN_SHOP"
-        )
-        item_row = self.items_full[self.items_full["item_id"] == item_id]
-        if not item_row.empty:
-            item_name = item_row.iloc[0]["item_name"]
-            item_category_name = item_row.iloc[0]["item_category_name"]
-        else:
-            item_name = "UNKNOWN_ITEM"
-            item_category_name = "UNKNOWN_CATEGORY"
+        return float(pred)
 
-        df["shop_name"] = shop_name
-        df["item_name"] = item_name
-        df["item_category_name"] = item_category_name
+    def predict_batch(self, items: list[dict]) -> list[float]:
+        df = pd.DataFrame(items)
 
         df["date_block_num"] = self.last_month
         df["month_num"] = (df["date_block_num"] % 12) + 1
         df["is_december"] = (df["month_num"] == 12).astype(int)
         df["month_sin"] = np.sin(2 * np.pi * df["month_num"] / 12)
         df["month_cos"] = np.cos(2 * np.pi * df["month_num"] / 12)
+
+        # shop metadata
+        df = df.merge(
+            self.shops[["shop_id", "shop_name"]],
+            on="shop_id",
+            how="left"
+        )
+
+        # item metadata
+        df = df.merge(
+            self.items_full[
+                ["item_id", "item_name", "item_category_name"]
+            ],
+            on="item_id",
+            how="left"
+        )
 
         keywords = [
             "доставка",
@@ -212,7 +232,9 @@ class FinalData:
             "игромир",
             "подарочный",
         ]
+
         pattern = "|".join(keywords)
+
         df["service_or_item"] = (
             df["item_name"]
             .str.lower()
@@ -221,54 +243,63 @@ class FinalData:
         )
 
         df["global_category"] = (
-            df["item_category_name"].str.split("-").str[0].str.strip()
+            df["item_category_name"]
+            .str.split("-")
+            .str[0]
+            .str.strip()
+            .astype(str)
         )
-        df["shop_city"] = df["shop_name"].str.split(" ").str[0].str.strip()
 
-        # !!! ПРИВОДИМ ТИПЫ ПЕРЕД МЕРДЖАМИ !!!
-        # shop_stats
-        self.shop_stats["shop_id"] = self.shop_stats["shop_id"].astype(int)
-        # item_history
-        self.item_history["item_id"] = self.item_history["item_id"].astype(int)
-        # last_lags
-        self.last_lags["shop_id"] = self.last_lags["shop_id"].astype(int)
-        self.last_lags["item_id"] = self.last_lags["item_id"].astype(int)
-        # price_stats
-        self.price_stats["item_id"] = self.price_stats["item_id"].astype(int)
-        # category_price_stats - приводим global_category к строке
-        self.category_price_stats["global_category"] = self.category_price_stats[
-            "global_category"
-        ].astype(str)
+        df["shop_city"] = (
+            df["shop_name"]
+            .str.split(" ")
+            .str[0]
+            .str.strip()
+        )
 
-        # Теперь мерджи
+        # feature merges
         df = df.merge(self.shop_stats, on="shop_id", how="left")
         df = df.merge(self.item_history, on="item_id", how="left")
         df = df.merge(self.last_lags, on=["shop_id", "item_id"], how="left")
         df = df.merge(self.price_stats, on="item_id", how="left")
-        df = df.merge(self.category_price_stats, on="global_category", how="left")
+        df = df.merge(
+            self.category_price_stats,
+            on="global_category",
+            how="left"
+        )
 
         df["price_ratio_to_category"] = (
-            df["item_price_global_mean"] / df["category_price_global_mean"]
+            df["item_price_global_mean"] /
+            df["category_price_global_mean"]
         )
-        df["price_ratio_to_category"] = df["price_ratio_to_category"].fillna(1)
+
+        df["price_ratio_to_category"] = (
+            df["price_ratio_to_category"].fillna(1)
+        )
+
         df["is_expensive"] = (
             df["item_price_global_mean"] > self.expensive_threshold
         ).astype(int)
-        df["is_cheap"] = (df["item_price_global_mean"] < self.cheap_threshold).astype(
-            int
-        )
+
+        df["is_cheap"] = (
+            df["item_price_global_mean"] < self.cheap_threshold
+        ).astype(int)
 
         df = df.drop(
-            columns=["ID", "shop_name", "item_name", "item_category_name"],
+            columns=["shop_name", "item_name", "item_category_name"],
             errors="ignore",
         )
 
         for col in self.cat_cols:
             df[col] = df[col].astype(str)
+
         encoded = self.encoder.transform(df[self.cat_cols])
+
         for i, col in enumerate(self.cat_cols):
             df[col] = encoded[:, i]
 
         df = df.fillna(0)
-        pred = self.model.predict(df)[0]
-        return float(np.clip(pred, 0, 20))
+
+        preds = self.model.predict(df)
+
+        return np.clip(preds, 0, 20).tolist()
