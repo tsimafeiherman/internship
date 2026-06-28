@@ -2,13 +2,13 @@ name: Build Docker Image
 
 on:
   push:
-    branches: [main, master]
+    branches: [main, master, deploy]
     paths:
       - "Dockerfile"
       - "pyproject.toml"
       - '**/*.py'
-  pull_request:  
-    branches: [main, master]
+  pull_request:
+    branches: [main, master, deploy]
 
 jobs:
   build:

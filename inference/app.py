@@ -8,25 +8,31 @@ from scripts.training.preprocessed import FinalData
 # Глобальный объект
 predictor = None
 
+
 def startup():
     global predictor
     artifacts_dir = os.getenv("ARTIFACTS_DIR", "artifacts")
     predictor = FinalData.load_artifacts(artifacts_dir)
     print(f"Model loaded from {artifacts_dir}")
 
+
 app = FastAPI(on_startup=[startup])
+
 
 class InferenceItem(BaseModel):
     ID: int
     shop_id: int
     item_id: int
 
+
 class InferenceRequest(BaseModel):
     items: List[InferenceItem]
+
 
 class PredictionResponse(BaseModel):
     ID: int
     item_cnt_month: float
+
 
 @app.post("/predict", response_model=List[PredictionResponse])
 async def predict(request: InferenceRequest):
@@ -37,6 +43,7 @@ async def predict(request: InferenceRequest):
         pred = predictor.predict(item.shop_id, item.item_id)
         results.append(PredictionResponse(ID=item.ID, item_cnt_month=pred))
     return results
+
 
 @app.get("/health")
 async def health():
